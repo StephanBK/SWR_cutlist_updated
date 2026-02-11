@@ -30,7 +30,6 @@ elif system_type == 'SWR-VIG':
     glass_offset = 11.1125
     profile_number = '03004'
 elif system_type == 'SWR':
-    # Let the user choose between the two SWR profiles
     swr_profile_choice = st.radio(
         "Select SWR Profile (Profile – Glass Offset)",
         [
@@ -102,7 +101,8 @@ part_number = f"{system_type}-{profile_number}" if system_type != 'Custom' else 
 
 # Download template
 template_path = 'SWR template.csv'
-st.download_button('Download Template', data=open(template_path, 'rb').read(), file_name='SWR_template.csv', mime='text/csv')
+with open(template_path, 'rb') as f:
+    st.download_button('Download Template', data=f.read(), file_name='SWR_template.csv', mime='text/csv')
 
 # File upload
 uploaded_file = st.file_uploader('Upload a CSV file', type='csv')
@@ -128,6 +128,7 @@ if uploaded_file:
     # Convert dims
     df['Overall Width mm'] = df['Overall Width in'] * inches_to_mm
     df['Overall Height mm'] = df['Overall Height in'] * inches_to_mm
+
     j_l = joint_left * inches_to_mm
     j_r = joint_right * inches_to_mm
     j_t = joint_top * inches_to_mm
@@ -154,17 +155,27 @@ if uploaded_file:
     # --- Glass File Export ---
     glass_df = pd.DataFrame({
         'Item': range(1, len(df) + 1),
-        'Glass Width in': df['Glass Width in'],
-        'Glass Width (1/16)': df['Glass Width in'].apply(to_sixteenth),
-        'Glass Height in': df['Glass Height in'],
-        'Glass Height (1/16)': df['Glass Height in'].apply(to_sixteenth),
-        'Area Each (ft²)': (df['Glass Width in'] * df['Glass Height in']) * sq_inches_to_sq_feet,
-        'Qty': df['Qty'],
-        'Area Total (ft²)': df['Qty'] * (df['Glass Width in'] * df['Glass Height in']) * sq_inches_to_sq_feet
+        'Glass Width in': df['Glass Width in'].values,
+        'Glass Width (1/16)': df['Glass Width in'].apply(to_sixteenth).values,
+        'Glass Height in': df['Glass Height in'].values,
+        'Glass Height (1/16)': df['Glass Height in'].apply(to_sixteenth).values,
+        'Area Each (ft²)': (df['Glass Width in'] * df['Glass Height in']).values * sq_inches_to_sq_feet,
+        'Qty': df['Qty'].values,
+        'Area Total (ft²)': (df['Qty'] * (df['Glass Width in'] * df['Glass Height in']) * sq_inches_to_sq_feet).values
     })
-    # Add totals row
-    totals = pd.DataFrame([{col: (glass_df[col].sum() if col in ['Qty', 'Area Total (ft²)'] else None) for col in glass_df.columns}])
-    totals.at[0, 'Item'] = 'Totals'
+
+    # Add totals row - FIX: only include numeric columns to avoid FutureWarning
+    totals_data = {
+        'Item': 'Totals',
+        'Glass Width in': '',
+        'Glass Width (1/16)': '',
+        'Glass Height in': '',
+        'Glass Height (1/16)': '',
+        'Area Each (ft²)': '',
+        'Qty': glass_df['Qty'].sum(),
+        'Area Total (ft²)': glass_df['Area Total (ft²)'].sum()
+    }
+    totals = pd.DataFrame([totals_data])
     glass_df = pd.concat([glass_df, totals], ignore_index=True)
 
     buf = BytesIO()
