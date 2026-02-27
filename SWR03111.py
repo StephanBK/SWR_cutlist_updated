@@ -292,80 +292,76 @@ if uploaded_file:
     st.divider()
     st.subheader("💾 Save to Odoo Project")
 
-    with st.expander("Odoo Connection Settings", expanded=False):
-        odoo_url     = st.text_input("Odoo URL",      value=os.environ.get("ODOO_URL", "https://inovues.odoo.com"))
-        odoo_db      = st.text_input("Odoo Database", value=os.environ.get("ODOO_DB",  "inovues"))
-        odoo_user    = st.text_input("Odoo User",     value=os.environ.get("ODOO_USER", "sketterer@inovues.com"))
-        odoo_api_key = st.text_input("Odoo API Key",  value=os.environ.get("ODOO_API_KEY", ""), type="password")
+    ODOO_URL     = os.environ.get("ODOO_URL",     "https://inovues.odoo.com")
+    ODOO_DB      = os.environ.get("ODOO_DB",      "inovues")
+    ODOO_USER    = os.environ.get("ODOO_USER",    "sketterer@inovues.com")
+    ODOO_API_KEY = os.environ.get("ODOO_API_KEY", "")
 
-    save_clicked = st.button("📎 Attach all 4 files to Odoo project", type="primary")
+    @st.cache_data(ttl=300, show_spinner="Loading projects from Odoo...")
+    def fetch_odoo_projects():
+        try:
+            common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+            uid    = common.authenticate(ODOO_DB, ODOO_USER, ODOO_API_KEY, {})
+            if not uid:
+                return None, "Authentication failed — check ODOO_API_KEY env var."
+            models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+            projects = models.execute_kw(
+                ODOO_DB, uid, ODOO_API_KEY,
+                "project.project", "search_read",
+                [[["active", "=", True]]],
+                {"fields": ["id", "name"], "order": "name asc", "limit": 200}
+            )
+            return {p["name"]: p["id"] for p in projects}, None
+        except Exception as e:
+            return None, str(e)
 
-    if save_clicked:
-        if not project_number or project_number.strip() == "INO-":
-            st.error("⚠️ Please enter a valid Project Number before saving.")
-        elif not odoo_api_key:
-            st.error("⚠️ Odoo API Key is required. Open the connection settings above.")
-        else:
-            with st.spinner(f"Connecting to Odoo and finding project '{project_number}'..."):
+    project_map, err = fetch_odoo_projects()
+
+    if err:
+        st.error(f"❌ Could not load Odoo projects: {err}")
+    elif not project_map:
+        st.warning("No active projects found in Odoo.")
+    else:
+        selected_project_name = st.selectbox(
+            "Select Odoo Project to attach files to:",
+            options=list(project_map.keys()),
+            index=None,
+            placeholder="Choose a project..."
+        )
+
+        if st.button("📎 Attach all 4 files to selected project", type="primary",
+                     disabled=selected_project_name is None):
+            project_id = project_map[selected_project_name]
+            with st.spinner(f"Attaching files to '{selected_project_name}'..."):
                 try:
-                    # ── Authenticate ──
-                    common = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/common")
-                    uid    = common.authenticate(odoo_db, odoo_user, odoo_api_key, {})
-                    if not uid:
-                        st.error("❌ Odoo authentication failed — check your credentials.")
-                        st.stop()
-                    models = xmlrpc.client.ServerProxy(f"{odoo_url}/xmlrpc/2/object")
+                    common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+                    uid    = common.authenticate(ODOO_DB, ODOO_USER, ODOO_API_KEY, {})
+                    models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
                     def odoo_call(model, method, args, kwargs={}):
-                        return models.execute_kw(odoo_db, uid, odoo_api_key, model, method, args, kwargs)
+                        return models.execute_kw(ODOO_DB, uid, ODOO_API_KEY, model, method, args, kwargs)
 
-                    # ── Find project by INO number ──
-                    project_ids = odoo_call("project.project", "search",
-                        [[["name", "ilike", project_number]]])
-
-                    if not project_ids:
-                        st.error(f"❌ No Odoo project found containing '{project_number}'. "
-                                 f"Check the project name in Odoo matches exactly.")
-                        st.stop()
-
-                    if len(project_ids) > 1:
-                        # Show which ones matched so user can be more specific
-                        matches = odoo_call("project.project", "read",
-                            [project_ids], {"fields": ["name"]})
-                        names = ", ".join(m["name"] for m in matches)
-                        st.warning(f"⚠️ Multiple projects matched: {names}. "
-                                   f"Using the first one. Make the project number more specific if needed.")
-
-                    project_id = project_ids[0]
-                    project_info = odoo_call("project.project", "read",
-                        [[project_id]], {"fields": ["name"]})[0]
-
-                    # ── Build file list ──
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     files = [
-                        (f"INO_{project_number}_SWR_Glass_{ts}.xlsx",       buf.getvalue()),
-                        (f"INO_{project_number}_SWR_AggCutOnly_{ts}.xlsx",  buf2.getvalue()),
-                        (f"INO_{project_number}_SWR_TagDetails_{ts}.xlsx",  buf3.getvalue()),
-                        (f"INO_{project_number}_SWR_Table_{ts}.xlsx",       buf4.getvalue()),
+                        (f"INO_{project_number}_SWR_Glass_{ts}.xlsx",      buf.getvalue()),
+                        (f"INO_{project_number}_SWR_AggCutOnly_{ts}.xlsx", buf2.getvalue()),
+                        (f"INO_{project_number}_SWR_TagDetails_{ts}.xlsx", buf3.getvalue()),
+                        (f"INO_{project_number}_SWR_Table_{ts}.xlsx",      buf4.getvalue()),
                     ]
 
-                    # ── Attach each file to the project ──
-                    attached = []
                     for fname, fdata in files:
-                        attachment_id = odoo_call("ir.attachment", "create", [{
-                            "name":        fname,
-                            "type":        "binary",
-                            "datas":       base64.b64encode(fdata).decode("utf-8"),
-                            "res_model":   "project.project",
-                            "res_id":      project_id,
-                            "mimetype":    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        odoo_call("ir.attachment", "create", [{
+                            "name":      fname,
+                            "type":      "binary",
+                            "datas":     base64.b64encode(fdata).decode("utf-8"),
+                            "res_model": "project.project",
+                            "res_id":    project_id,
+                            "mimetype":  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         }])
-                        attached.append((fname, attachment_id))
 
-                    # ── Post a chatter message so it shows in the log ──
                     odoo_call("project.project", "message_post", [[project_id]], {
                         "body": (
-                            f"<b>✂️ SWR Cut List files attached</b><br/>"
+                            f"<b>✂️ SWR Cut List attached</b><br/>"
                             f"Prepared by: {prepared_by}<br/>"
                             f"System: {system_type} | Profile: {profile_number} | Finish: {finish}<br/>"
                             f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}<br/>"
@@ -375,14 +371,9 @@ if uploaded_file:
                         "subtype_xmlid": "mail.mt_comment",
                     })
 
-                    st.success(
-                        f"✅ All 4 files attached to **{project_info['name']}** in Odoo!\n\n"
-                        f"Open the project in Odoo and check the chatter / attachments."
-                    )
-                    for fname, att_id in attached:
-                        st.write(f"  📎 {fname} (attachment ID: {att_id})")
+                    st.success(f"✅ All 4 files attached to **{selected_project_name}** in Odoo!")
 
                 except xmlrpc.client.Fault as e:
                     st.error(f"❌ Odoo API error: {e.faultString}")
                 except Exception as e:
-                    st.error(f"❌ Unexpected error: {str(e)}")
+                    st.error(f"❌ Error: {str(e)}")
