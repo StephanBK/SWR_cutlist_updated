@@ -157,7 +157,7 @@ if uploaded_file:
 
     # --- Glass File Export ---
     glass_df = pd.DataFrame({
-        'Item': range(1, len(df) + 1),
+        'Tag': df['Tag'].values,
         'Glass Width in': df['Glass Width in'].values,
         'Glass Width (1/16)': df['Glass Width in'].apply(to_sixteenth).values,
         'Glass Height in': df['Glass Height in'].values,
@@ -169,7 +169,7 @@ if uploaded_file:
 
     # Add totals row - FIX: only include numeric columns to avoid FutureWarning
     totals_data = {
-        'Item': 'Totals',
+        'Tag': 'Totals',
         'Glass Width in': '',
         'Glass Width (1/16)': '',
         'Glass Height in': '',
