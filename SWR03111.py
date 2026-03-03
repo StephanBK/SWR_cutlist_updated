@@ -417,10 +417,9 @@ if uploaded_file:
                 else:
                     product_id = product_ids[0]
 
-                    # Read the product's UoM (uom_id in Odoo 19+)
+                    # Read the product info
                     product_data = odoo_call("product.product", "read",
-                        [product_id], {"fields": ["uom_id"]})
-                    uom_id = product_data[0]["uom_id"][0] if product_data else False
+                        [product_id], {"fields": ["name"]})
 
                     order_lines = []
                     for _, row in glass_lines.iterrows():
@@ -441,7 +440,6 @@ if uploaded_file:
                             "product_id": product_id,
                             "name": description,
                             "product_qty": total_area_line,
-                            "product_uom": uom_id,
                             "price_unit": 0.0,
                         }))
 
