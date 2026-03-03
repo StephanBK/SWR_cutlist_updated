@@ -377,3 +377,147 @@ if uploaded_file:
                     st.error(f"❌ Odoo API error: {e.faultString}")
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
+
+    # ─────────────────────────────────────────────────────────────
+    # 📝 CREATE DRAFT PURCHASE ORDER IN ODOO
+    # ─────────────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("📝 Create Glass Purchase Order in Odoo")
+
+    @st.cache_data(ttl=300, show_spinner="Loading vendors from Odoo...")
+    def fetch_odoo_vendors():
+        try:
+            common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+            uid    = common.authenticate(ODOO_DB, ODOO_USER, ODOO_API_KEY, {})
+            if not uid:
+                return None, "Authentication failed."
+            models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+            vendors = models.execute_kw(
+                ODOO_DB, uid, ODOO_API_KEY,
+                "res.partner", "search_read",
+                [[["supplier_rank", ">", 0]]],
+                {"fields": ["id", "name"], "order": "name asc", "limit": 200}
+            )
+            if not vendors:
+                vendors = models.execute_kw(
+                    ODOO_DB, uid, ODOO_API_KEY,
+                    "res.partner", "search_read",
+                    [[["is_company", "=", True]]],
+                    {"fields": ["id", "name"], "order": "name asc", "limit": 200}
+                )
+            return {v["name"]: v["id"] for v in vendors}, None
+        except Exception as e:
+            return None, str(e)
+
+    vendor_map, vendor_err = fetch_odoo_vendors()
+
+    if vendor_err:
+        st.error(f"❌ Could not load vendors: {vendor_err}")
+    elif not vendor_map:
+        st.warning("No vendors found in Odoo. Please create a vendor contact first.")
+    else:
+        selected_vendor = st.selectbox(
+            "Select Glass Vendor:",
+            options=list(vendor_map.keys()),
+            index=None,
+            placeholder="Choose a vendor...",
+            key="po_vendor"
+        )
+
+        glass_lines = glass_df[glass_df['Tag'] != 'Totals'].copy()
+
+        st.write("**Preview — PO lines to be created:**")
+        preview_df = pd.DataFrame({
+            'Tag': glass_lines['Tag'].values,
+            'Size': (glass_lines['Glass Width (1/16)'].astype(str) + '" x ' + glass_lines['Glass Height (1/16)'].astype(str) + '"').values,
+            'Area Each (ft²)': glass_lines['Area Each (ft²)'].round(2).values,
+            'Qty': glass_lines['Qty'].values,
+            'Area Total (ft²)': glass_lines['Area Total (ft²)'].round(2).values,
+        })
+        st.dataframe(preview_df, use_container_width=True)
+
+        total_qty = int(glass_lines['Qty'].sum())
+        total_area = glass_lines['Area Total (ft²)'].sum()
+        st.write(f"**Totals:** {total_qty} pieces | {total_area:.2f} ft²")
+
+        if st.button("📝 Create Draft PO in Odoo", type="primary",
+                     disabled=selected_vendor is None):
+            vendor_id = vendor_map[selected_vendor]
+            with st.spinner("Creating draft Purchase Order in Odoo..."):
+                try:
+                    common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+                    uid    = common.authenticate(ODOO_DB, ODOO_USER, ODOO_API_KEY, {})
+                    models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+
+                    def odoo_call(model, method, args, kwargs={}):
+                        return models.execute_kw(ODOO_DB, uid, ODOO_API_KEY, model, method, args, kwargs)
+
+                    product_ids = odoo_call("product.product", "search",
+                        [[["name", "ilike", "SWR Glass Panel"]]])
+
+                    if not product_ids:
+                        st.error("❌ Product 'SWR Glass Panel' not found in Odoo. Please create it first.")
+                    else:
+                        product_id = product_ids[0]
+
+                        product_data = odoo_call("product.product", "read",
+                            [product_id], {"fields": ["uom_po_id"]})
+                        uom_id = product_data[0]["uom_po_id"][0] if product_data else False
+
+                        order_lines = []
+                        for _, row in glass_lines.iterrows():
+                            tag = row['Tag']
+                            size_str = f"{row['Glass Width (1/16)']}\" x {row['Glass Height (1/16)']}\""
+                            area_each = round(row['Area Each (ft²)'], 2)
+                            qty = int(row['Qty'])
+                            total_area_line = round(row['Area Total (ft²)'], 2)
+
+                            description = (
+                                f"GL-1-{tag} — {size_str}\n"
+                                f"Area each: {area_each} ft² | "
+                                f"Qty: {qty} pcs | "
+                                f"Total area: {total_area_line} ft²"
+                            )
+
+                            order_lines.append((0, 0, {
+                                "product_id": product_id,
+                                "name": description,
+                                "product_qty": total_area_line,
+                                "product_uom": uom_id,
+                                "price_unit": 0.0,
+                            }))
+
+                        po_vals = {
+                            "partner_id": vendor_id,
+                            "origin": f"INO-{project_number} / SWR Cut List",
+                            "notes": (
+                                f"Project: {project_name}\n"
+                                f"Project Number: {project_number}\n"
+                                f"System: {system_type} | Finish: {finish}\n"
+                                f"Prepared by: {prepared_by}\n"
+                                f"Generated from SWR Cutlist App"
+                            ),
+                            "order_line": order_lines,
+                        }
+
+                        po_id = odoo_call("purchase.order", "create", [po_vals])
+
+                        po_data = odoo_call("purchase.order", "read",
+                            [po_id], {"fields": ["name"]})
+                        po_name = po_data[0]["name"] if po_data else f"ID {po_id}"
+
+                        st.success(
+                            f"✅ Draft PO **{po_name}** created in Odoo with "
+                            f"{len(order_lines)} glass lines!\n\n"
+                            f"Open it in Odoo to add pricing, glass specs, "
+                            f"packaging, and other charges."
+                        )
+                        st.info(
+                            f"🔗 Open in Odoo: {ODOO_URL}/web#id={po_id}"
+                            f"&model=purchase.order&view_type=form"
+                        )
+
+                except xmlrpc.client.Fault as e:
+                    st.error(f"❌ Odoo API error: {e.faultString}")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
