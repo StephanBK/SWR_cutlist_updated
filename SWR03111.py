@@ -447,13 +447,6 @@ if uploaded_file:
 
                     po_vals = {
                         "origin": f"INO-{project_number} / SWR Cut List",
-                        "notes": (
-                            f"Project: {project_name}\n"
-                            f"Project Number: {project_number}\n"
-                            f"System: {system_type} | Finish: {finish}\n"
-                            f"Prepared by: {prepared_by}\n"
-                            f"Generated from SWR Cutlist App"
-                        ),
                         "order_line": order_lines,
                     }
 
@@ -462,6 +455,20 @@ if uploaded_file:
                     po_data = odoo_call("purchase.order", "read",
                         [po_id], {"fields": ["name"]})
                     po_name = po_data[0]["name"] if po_data else f"ID {po_id}"
+
+                    # Post project info as a chatter message on the PO
+                    odoo_call("purchase.order", "message_post", [[po_id]], {
+                        "body": (
+                            f"<b>📝 Draft PO from SWR Cutlist App</b><br/>"
+                            f"Project: {project_name}<br/>"
+                            f"Project Number: {project_number}<br/>"
+                            f"System: {system_type} | Finish: {finish}<br/>"
+                            f"Prepared by: {prepared_by}<br/>"
+                            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                        ),
+                        "message_type": "comment",
+                        "subtype_xmlid": "mail.mt_comment",
+                    })
 
                     st.success(
                         f"✅ Draft PO **{po_name}** created in Odoo with "
