@@ -430,14 +430,14 @@ if uploaded_file:
         preview_df = pd.DataFrame({
             'Tag': glass_lines['Tag'].values,
             'Size': (glass_lines['Glass Width (1/16)'].astype(str) + '" x ' + glass_lines['Glass Height (1/16)'].astype(str) + '"').values,
-            'Area Each (ft²)': glass_lines['Area Each (ft²)'].round(2).values,
-            'Qty': glass_lines['Qty'].values,
-            'Area Total (ft²)': glass_lines['Area Total (ft²)'].round(2).values,
+            'Area Each (ft²)': pd.to_numeric(glass_lines['Area Each (ft²)']).round(2).values,
+            'Qty': pd.to_numeric(glass_lines['Qty']).values,
+            'Area Total (ft²)': pd.to_numeric(glass_lines['Area Total (ft²)']).round(2).values,
         })
         st.dataframe(preview_df, use_container_width=True)
 
-        total_qty = int(glass_lines['Qty'].sum())
-        total_area = glass_lines['Area Total (ft²)'].sum()
+        total_qty = int(pd.to_numeric(glass_lines['Qty']).sum())
+        total_area = pd.to_numeric(glass_lines['Area Total (ft²)']).sum()
         st.write(f"**Totals:** {total_qty} pieces | {total_area:.2f} ft²")
 
         if st.button("📝 Create Draft PO in Odoo", type="primary",
@@ -468,9 +468,9 @@ if uploaded_file:
                         for _, row in glass_lines.iterrows():
                             tag = row['Tag']
                             size_str = f"{row['Glass Width (1/16)']}\" x {row['Glass Height (1/16)']}\""
-                            area_each = round(row['Area Each (ft²)'], 2)
-                            qty = int(row['Qty'])
-                            total_area_line = round(row['Area Total (ft²)'], 2)
+                            area_each = round(float(row['Area Each (ft²)']), 2)
+                            qty = int(float(row['Qty']))
+                            total_area_line = round(float(row['Area Total (ft²)']), 2)
 
                             description = (
                                 f"GL-1-{tag} — {size_str}\n"
