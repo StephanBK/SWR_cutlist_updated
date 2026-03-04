@@ -399,7 +399,52 @@ if uploaded_file:
     total_area = pd.to_numeric(glass_lines['Area Total (ft²)']).sum()
     st.write(f"**Totals:** {total_qty} pieces | {total_area:.2f} ft²")
 
-    if st.button("📝 Create Draft PO in Odoo", type="primary"):
+    # --- Vendor selector (required by Odoo) ---
+    @st.cache_data(ttl=300, show_spinner="Loading vendors from Odoo...")
+    def fetch_odoo_vendors():
+        try:
+            _common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+            _uid = _common.authenticate(ODOO_DB, ODOO_USER, ODOO_API_KEY, {})
+            if not _uid:
+                return None, "Authentication failed."
+            _models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+            vendors = _models.execute_kw(
+                ODOO_DB, _uid, ODOO_API_KEY,
+                "res.partner", "search_read",
+                [[["supplier_rank", ">", 0]]],
+                {"fields": ["id", "name"], "order": "name asc", "limit": 200}
+            )
+            if not vendors:
+                # Fallback: load all companies if no vendor-ranked contacts yet
+                vendors = _models.execute_kw(
+                    ODOO_DB, _uid, ODOO_API_KEY,
+                    "res.partner", "search_read",
+                    [[["is_company", "=", True]]],
+                    {"fields": ["id", "name"], "order": "name asc", "limit": 200}
+                )
+            return {v["name"]: v["id"] for v in vendors}, None
+        except Exception as e:
+            return None, str(e)
+
+    vendor_map, vendor_err = fetch_odoo_vendors()
+    selected_vendor = None
+
+    if vendor_err:
+        st.error(f"❌ Could not load vendors: {vendor_err}")
+    elif not vendor_map:
+        st.warning("No vendors found in Odoo. Create a vendor contact first (Contacts → New, enable 'Is a Company').")
+    else:
+        selected_vendor = st.selectbox(
+            "Select Glass Vendor",
+            options=list(vendor_map.keys()),
+            index=None,
+            placeholder="Choose a vendor...",
+            help="Required — Odoo won't create a PO without a vendor."
+        )
+
+    vendor_ready = (vendor_map and not vendor_err and selected_vendor is not None)
+
+    if st.button("📝 Create Draft PO in Odoo", type="primary", disabled=not vendor_ready):
         with st.spinner("Creating draft Purchase Order in Odoo..."):
             try:
                 common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
@@ -444,6 +489,7 @@ if uploaded_file:
                         }))
 
                     po_vals = {
+                        "partner_id": vendor_map[selected_vendor],
                         "origin": f"INO-{project_number} / SWR Cut List",
                         "order_line": order_lines,
                     }
@@ -469,9 +515,9 @@ if uploaded_file:
                     })
 
                     st.success(
-                        f"✅ Draft PO **{po_name}** created in Odoo with "
+                        f"✅ Draft PO **{po_name}** created for **{selected_vendor}** with "
                         f"{len(order_lines)} glass lines!\n\n"
-                        f"Open it in Odoo to add vendor, pricing, glass specs, "
+                        f"Open it in Odoo to add pricing, glass specs, "
                         f"packaging, and other charges."
                     )
                     st.info(
