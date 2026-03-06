@@ -474,17 +474,22 @@ if uploaded_file:
                         qty_pcs      = int(float(row['Qty']))
                         total_area   = round(float(row['Area Total (ft²)']), 2)
 
-                        # Plain text description — all data on separate lines
-                        description = (
-                            f"GL-1-{tag} - {size_str}\n"
-                            f"Unit Area: {area_each} ft2  |  Qty: {qty_pcs} pcs  |  Total Area: {total_area} ft2"
-                        )
-
+                        # Product line: size in description, piece count as qty
                         order_lines.append((0, 0, {
-                            "product_id":   product_id,
-                            "name":         description,
-                            "product_qty":  qty_pcs,      # quantity = piece count
-                            "price_unit":   0.0,
+                            "product_id":  product_id,
+                            "name":        size_str,
+                            "product_qty": qty_pcs,
+                            "price_unit":  0.0,
+                        }))
+
+                        # Note line: unit area, qty, total area
+                        order_lines.append((0, 0, {
+                            "display_type": "line_note",
+                            "name": (
+                                f"Unit Area: {area_each} ft2  |  "
+                                f"Qty: {qty_pcs} pcs  |  "
+                                f"Total Area: {total_area} ft2"
+                            ),
                         }))
 
                     po_vals = {
