@@ -468,24 +468,25 @@ if uploaded_file:
 
                     order_lines = []
                     for _, row in glass_lines.iterrows():
-                        tag = row['Tag']
-                        size_str = f"{row['Glass Width (1/16)']}\" x {row['Glass Height (1/16)']}\""
-                        area_each = round(float(row['Area Each (ft²)']), 2)
-                        qty = int(float(row['Qty']))
-                        total_area_line = round(float(row['Area Total (ft²)']), 2)
+                        tag          = row['Tag']
+                        size_str     = f"{row['Glass Width (1/16)']}\" x {row['Glass Height (1/16)']}\""
+                        area_each    = round(float(row['Area Each (ft²)']), 2)
+                        qty_pcs      = int(float(row['Qty']))
+                        total_area   = round(float(row['Area Total (ft²)']), 2)
 
+                        # Clean single-line description: tag, fractional size, piece count, unit area
                         description = (
-                            f"GL-1-{tag} — {size_str}\n"
-                            f"Area each: {area_each} ft² | "
-                            f"Qty: {qty} pcs | "
-                            f"Total area: {total_area_line} ft²"
+                            f"GL-1-{tag} \u2013 {size_str} "
+                            f"| {area_each} ft\u00b2/pc "
+                            f"| {qty_pcs} pcs "
+                            f"| {total_area} ft\u00b2 total"
                         )
 
                         order_lines.append((0, 0, {
-                            "product_id": product_id,
-                            "name": description,
-                            "product_qty": total_area_line,
-                            "price_unit": 0.0,
+                            "product_id":   product_id,
+                            "name":         description,
+                            "product_qty":  total_area,   # quantity = total sqft ordered
+                            "price_unit":   0.0,
                         }))
 
                     po_vals = {
