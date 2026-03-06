@@ -490,6 +490,7 @@ if uploaded_file:
                                 f"Qty: {qty_pcs} pcs  |  "
                                 f"Total Area: {total_area} ft2"
                             ),
+                            "product_qty": 0,
                         }))
 
                     po_vals = {
