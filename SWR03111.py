@@ -485,7 +485,7 @@ if uploaded_file:
                         order_lines.append((0, 0, {
                             "product_id":   product_id,
                             "name":         description,
-                            "product_qty":  total_area,   # quantity = total sqft ordered
+                            "product_qty":  qty_pcs,      # quantity = piece count
                             "price_unit":   0.0,
                         }))
 
