@@ -474,12 +474,10 @@ if uploaded_file:
                         qty_pcs      = int(float(row['Qty']))
                         total_area   = round(float(row['Area Total (ft²)']), 2)
 
-                        # Multi-line HTML description — renders as separate lines in Odoo
+                        # Plain text description — all data on separate lines
                         description = (
-                            f"GL-1-{tag} &ndash; {size_str}<br/>"
-                            f"Unit Area: {area_each} ft² &nbsp;|&nbsp; "
-                            f"Qty: {qty_pcs} pcs &nbsp;|&nbsp; "
-                            f"Total Area: {total_area} ft²"
+                            f"GL-1-{tag} - {size_str}\n"
+                            f"Unit Area: {area_each} ft2  |  Qty: {qty_pcs} pcs  |  Total Area: {total_area} ft2"
                         )
 
                         order_lines.append((0, 0, {
