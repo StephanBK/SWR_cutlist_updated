@@ -468,29 +468,21 @@ if uploaded_file:
 
                     order_lines = []
                     for _, row in glass_lines.iterrows():
-                        tag          = row['Tag']
-                        size_str     = f"{row['Glass Width (1/16)']}\" x {row['Glass Height (1/16)']}\""
-                        area_each    = round(float(row['Area Each (ft²)']), 2)
-                        qty_pcs      = int(float(row['Qty']))
-                        total_area   = round(float(row['Area Total (ft²)']), 2)
+                        size_str   = f"{row['Glass Width (1/16)']}\" x {row['Glass Height (1/16)']}\""
+                        area_each  = round(float(row['Area Each (ft²)']), 2)
+                        qty_pcs    = int(float(row['Qty']))
+                        total_area = round(float(row['Area Total (ft²)']), 2)
 
-                        # Product line: size in description, piece count as qty
+                        description = (
+                            f"{size_str}\n"
+                            f"Unit Area: {area_each} ft2  |  Qty: {qty_pcs} pcs  |  Total Area: {total_area} ft2"
+                        )
+
                         order_lines.append((0, 0, {
                             "product_id":  product_id,
-                            "name":        size_str,
+                            "name":        description,
                             "product_qty": qty_pcs,
                             "price_unit":  0.0,
-                        }))
-
-                        # Note line: unit area, qty, total area
-                        order_lines.append((0, 0, {
-                            "display_type": "line_note",
-                            "name": (
-                                f"Unit Area: {area_each} ft2  |  "
-                                f"Qty: {qty_pcs} pcs  |  "
-                                f"Total Area: {total_area} ft2"
-                            ),
-                            "product_qty": 0,
                         }))
 
                     po_vals = {
