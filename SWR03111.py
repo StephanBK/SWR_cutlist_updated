@@ -342,6 +342,15 @@ if uploaded_file:
                         return models.execute_kw(ODOO_DB, uid, ODOO_API_KEY, model, method, args, kwargs)
 
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+                    # Create a task in the Engineering stage, set to Approved
+                    task_id = odoo_call("project.task", "create", [{
+                        "name": f"SWR Cutlist — {datetime.now().strftime('%Y-%m-%d')}",
+                        "project_id": project_id,
+                        "stage_id": 8,  # Engineering
+                        "state": "03_approved",
+                    }])
+
                     files = [
                         (f"INO_{project_number}_SWR_Glass_{ts}.xlsx",      buf.getvalue()),
                         (f"INO_{project_number}_SWR_AggCutOnly_{ts}.xlsx", buf2.getvalue()),
@@ -354,12 +363,12 @@ if uploaded_file:
                             "name":      fname,
                             "type":      "binary",
                             "datas":     base64.b64encode(fdata).decode("utf-8"),
-                            "res_model": "project.project",
-                            "res_id":    project_id,
+                            "res_model": "project.task",
+                            "res_id":    task_id,
                             "mimetype":  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         }])
 
-                    odoo_call("project.project", "message_post", [[project_id]], {
+                    odoo_call("project.task", "message_post", [[task_id]], {
                         "body": (
                             f"<b>✂️ SWR Cut List attached</b><br/>"
                             f"Prepared by: {prepared_by}<br/>"
@@ -371,7 +380,7 @@ if uploaded_file:
                         "subtype_xmlid": "mail.mt_comment",
                     })
 
-                    st.success(f"✅ All 4 files attached to **{selected_project_name}** in Odoo!")
+                    st.success(f"✅ All 4 files attached to task **SWR Cutlist** in **{selected_project_name}** (Engineering → Approved)!")
 
                 except xmlrpc.client.Fault as e:
                     st.error(f"❌ Odoo API error: {e.faultString}")
