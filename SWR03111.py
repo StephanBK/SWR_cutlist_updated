@@ -358,8 +358,10 @@ if uploaded_file:
                         (f"INO_{project_number}_SWR_Table_{ts}.xlsx",      buf4.getvalue()),
                     ]
 
+                    # Create attachments and collect their IDs
+                    attachment_ids = []
                     for fname, fdata in files:
-                        odoo_call("ir.attachment", "create", [{
+                        att_id = odoo_call("ir.attachment", "create", [{
                             "name":      fname,
                             "type":      "binary",
                             "datas":     base64.b64encode(fdata).decode("utf-8"),
@@ -367,7 +369,9 @@ if uploaded_file:
                             "res_id":    task_id,
                             "mimetype":  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         }])
+                        attachment_ids.append(att_id)
 
+                    # Post message WITH attachment_ids so files show in chatter
                     odoo_call("project.task", "message_post", [[task_id]], {
                         "body": (
                             f"<b>✂️ SWR Cut List attached</b><br/>"
@@ -376,6 +380,7 @@ if uploaded_file:
                             f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}<br/>"
                             f"Files: Glass, AggCutOnly, TagDetails, SWR Table"
                         ),
+                        "attachment_ids": attachment_ids,
                         "message_type": "comment",
                         "subtype_xmlid": "mail.mt_comment",
                     })
