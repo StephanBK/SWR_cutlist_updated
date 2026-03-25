@@ -136,7 +136,7 @@ def generate_po_docx(
     for idx, line in enumerate(glass_lines):
         row = table.add_row()
         line_total = line['area_total'] * price_per_sqft
-        vals = [str(idx + 1), line.get('tag', ''), line.get('size_str', ''),
+        vals = [str(idx + 1), line.get('description', ''), line.get('size_str', ''),
                 f"{line['area_each']:.2f}", str(line['qty']),
                 f"{line['area_total']:.2f}", f"${line_total:,.2f}"]
         for i, v in enumerate(vals):
@@ -599,17 +599,49 @@ if uploaded_file:
 
     glass_lines = glass_df[glass_df['Tag'] != 'Totals'].copy()
 
-    st.write("**Preview — PO lines:**")
-    preview_df = pd.DataFrame({
-        'Size': (glass_lines['Glass Width (1/16)'].astype(str) + '" x ' + glass_lines['Glass Height (1/16)'].astype(str) + '"').values,
-        'Area Each (ft²)': pd.to_numeric(glass_lines['Area Each (ft²)']).round(2).values,
-        'Qty': pd.to_numeric(glass_lines['Qty']).values,
-        'Area Total (ft²)': pd.to_numeric(glass_lines['Area Total (ft²)']).round(2).values,
-    })
-    st.dataframe(preview_df, use_container_width=True)
-
     total_qty = int(pd.to_numeric(glass_lines['Qty']).sum())
     total_area = pd.to_numeric(glass_lines['Area Total (ft²)']).sum()
+
+    # --- Per-line description inputs ---
+    st.write("**PO Line Items — enter description per size (first entry becomes default for all):**")
+
+    # Build size list for display
+    size_strs = []
+    for _, row in glass_lines.iterrows():
+        size_strs.append(f"{row['Glass Width (1/16)']}\" x {row['Glass Height (1/16)']}\"")
+
+    # First line description sets the default
+    first_desc = st.text_input(
+        f"Description for all sizes (or just line 1: {size_strs[0]})",
+        value="",
+        key="po_desc_0",
+        placeholder="e.g. GT1 – 10mm Leadus VIG: 5Tlow-E(D80)+V+5T"
+    )
+
+    line_descriptions = [first_desc]
+    if len(size_strs) > 1:
+        with st.expander(f"Override descriptions for lines 2–{len(size_strs)} (default: same as line 1)", expanded=False):
+            for i in range(1, len(size_strs)):
+                desc = st.text_input(
+                    f"Line {i+1}: {size_strs[i]}",
+                    value="",
+                    key=f"po_desc_{i}",
+                    placeholder=first_desc if first_desc else "Same as line 1"
+                )
+                line_descriptions.append(desc if desc else first_desc)
+
+    # Preview table
+    preview_data = []
+    for i, (_, row) in enumerate(glass_lines.iterrows()):
+        desc = line_descriptions[i] if i < len(line_descriptions) else first_desc
+        preview_data.append({
+            'Description': desc,
+            'Size': size_strs[i],
+            'Area Each (ft²)': round(float(row['Area Each (ft²)']), 2),
+            'Qty': int(float(row['Qty'])),
+            'Area Total (ft²)': round(float(row['Area Total (ft²)']), 2),
+        })
+    st.dataframe(pd.DataFrame(preview_data), use_container_width=True, hide_index=True)
     st.write(f"**Totals:** {total_qty} pieces | {total_area:.2f} ft²")
 
     # --- Vendor selector (with full contact details) ---
@@ -735,10 +767,11 @@ if uploaded_file:
 
     # --- Build glass line items for the docx ---
     po_glass_lines = []
-    for _, row in glass_lines.iterrows():
+    for i, (_, row) in enumerate(glass_lines.iterrows()):
+        desc = line_descriptions[i] if i < len(line_descriptions) else first_desc
         po_glass_lines.append({
-            'tag': str(row.get('Tag', '')),
-            'size_str': f"{row['Glass Width (1/16)']}\" x {row['Glass Height (1/16)']}\"",
+            'description': desc,
+            'size_str': size_strs[i],
             'area_each': round(float(row['Area Each (ft²)']), 2),
             'qty': int(float(row['Qty'])),
             'area_total': round(float(row['Area Total (ft²)']), 2),
@@ -813,14 +846,15 @@ if uploaded_file:
 
                         order_lines = []
                         for gl in po_glass_lines:
-                            description = (
+                            odoo_desc = (
+                                f"{gl['description']}\n"
                                 f"{gl['size_str']}\n"
                                 f"Unit Area: {gl['area_each']} ft2  |  Qty: {gl['qty']} pcs  |  Total Area: {gl['area_total']} ft2"
                             )
                             line_total = gl['area_total'] * price_per_sqft
                             order_lines.append((0, 0, {
                                 "product_id":  product_id,
-                                "name":        description,
+                                "name":        odoo_desc,
                                 "product_qty": gl['qty'],
                                 "price_unit":  line_total / gl['qty'] if gl['qty'] > 0 else 0.0,
                             }))
