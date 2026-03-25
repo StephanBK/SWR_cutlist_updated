@@ -5,11 +5,206 @@ from io import BytesIO
 import xmlrpc.client
 import base64
 import os
+from docx import Document as DocxDocument
+from docx.shared import Inches, Pt, Cm, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.oxml.ns import qn
 
 # Conversion constants
 inches_to_mm = 25.4
 mm_to_inches = 1 / inches_to_mm
 sq_inches_to_sq_feet = 1 / 144
+
+
+# ─────────────────────────────────────────────────────────────
+# 📄 GENERATE PURCHASE ORDER DOCX
+# ─────────────────────────────────────────────────────────────
+def _add_shading(cell, color):
+    """Add background shading to a table cell."""
+    tcPr = cell._element.get_or_add_tcPr()
+    shd = tcPr.makeelement(qn('w:shd'), {qn('w:fill'): color, qn('w:val'): 'clear'})
+    tcPr.append(shd)
+
+
+def generate_po_docx(
+    vendor_name, vendor_contact, vendor_email, vendor_address,
+    ship_to_lines, job_number, job_location,
+    po_date, po_number, requisitioner,
+    lead_time, shipped_via, fob_point, terms,
+    glass_lines,
+    price_per_sqft, packaging_cost, shipping_cost, sales_tax, other_cost,
+    packaging_note="Non-returnable boxed crate/rack",
+    logo_path=None,
+):
+    """Generate an INOVUES-format Purchase Order as a .docx BytesIO buffer."""
+    doc = DocxDocument()
+
+    for section in doc.sections:
+        section.top_margin = Cm(1.27)
+        section.bottom_margin = Cm(1.27)
+        section.left_margin = Cm(1.27)
+        section.right_margin = Cm(1.27)
+
+    style = doc.styles['Normal']
+    style.font.name = 'Arial'
+    style.font.size = Pt(9)
+
+    subtotal = sum(line['area_total'] * price_per_sqft for line in glass_lines)
+    total = subtotal + (sales_tax or 0) + (packaging_cost or 0) + (shipping_cost or 0) + (other_cost or 0)
+
+    table = doc.add_table(rows=0, cols=7)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.style = 'Table Grid'
+
+    # ── Row: Logo + PURCHASE ORDER ──
+    row = table.add_row()
+    c = row.cells[0]; c.merge(row.cells[2])
+    if logo_path:
+        c.paragraphs[0].add_run().add_picture(logo_path, width=Inches(1.5))
+    c = row.cells[3]; c.merge(row.cells[6])
+    p = c.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run = p.add_run("PURCHASE ORDER")
+    run.bold = True; run.font.size = Pt(16); run.font.small_caps = True
+
+    # ── Row: TO / SHIP TO / BILL TO ──
+    row = table.add_row()
+
+    c = row.cells[0]; c.merge(row.cells[1])
+    p = c.paragraphs[0]; run = p.add_run("TO:"); run.bold = True; run.font.small_caps = True
+    c.add_paragraph().add_run(vendor_name)
+    if vendor_contact:
+        c.add_paragraph().add_run(f"Attn: {vendor_contact}")
+    if vendor_email:
+        c.add_paragraph().add_run(vendor_email)
+    if vendor_address:
+        for ln in vendor_address.split('\n'):
+            if ln.strip():
+                c.add_paragraph().add_run(ln)
+    c.add_paragraph()
+    p = c.add_paragraph(); run = p.add_run(f"JOB NO.: {job_number}"); run.bold = True
+    if job_location:
+        p = c.add_paragraph(); run = p.add_run(f"JOB LOCATION: {job_location}"); run.bold = True
+
+    c = row.cells[2]; c.merge(row.cells[4])
+    p = c.paragraphs[0]; run = p.add_run("SHIP TO:"); run.bold = True; run.font.small_caps = True
+    for ln in ship_to_lines:
+        c.add_paragraph().add_run(ln)
+
+    c = row.cells[5]; c.merge(row.cells[6])
+    p = c.paragraphs[0]; run = p.add_run("BILL TO:"); run.bold = True; run.font.small_caps = True
+    for ln in ["INOVUES, INC.", "2700 Post Oak Blvd., 2100", "Houston, TX 77056",
+               "accounts@inovues.com", "(833) 466-8837 (INO-VUES)"]:
+        c.add_paragraph().add_run(ln)
+
+    # ── Spacer ──
+    row = table.add_row(); row.cells[0].merge(row.cells[6])
+
+    # ── PO metadata headers ──
+    row = table.add_row()
+    for i, h in enumerate(["P.O. DATE", "P.O. NUMBER", "REQUISITIONER", "LEAD TIME",
+                            "SHIPPED VIA", "F.O.B. POINT", "TERMS"]):
+        p = row.cells[i].paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(h); run.bold = True; run.font.size = Pt(7); run.font.small_caps = True
+        _add_shading(row.cells[i], 'D9E2F3')
+
+    # ── PO metadata values ──
+    row = table.add_row()
+    for i, v in enumerate([po_date, po_number, requisitioner, lead_time, shipped_via, fob_point, terms]):
+        p = row.cells[i].paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.add_run(str(v)).font.size = Pt(9)
+
+    # ── Spacer ──
+    row = table.add_row(); row.cells[0].merge(row.cells[6])
+
+    # ── Line item headers ──
+    row = table.add_row()
+    for i, h in enumerate(["ITEM#", "DESCRIPTION", "UNIT SIZE (in)", "AREA EACH (ft²)",
+                            "QTY", "TOTAL AREA (ft²)", "TOTAL"]):
+        p = row.cells[i].paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(h); run.bold = True; run.font.size = Pt(8); run.font.small_caps = True
+        run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        _add_shading(row.cells[i], '2E75B6')
+
+    # ── Line item rows ──
+    for idx, line in enumerate(glass_lines):
+        row = table.add_row()
+        line_total = line['area_total'] * price_per_sqft
+        vals = [str(idx + 1), line.get('tag', ''), line.get('size_str', ''),
+                f"{line['area_each']:.2f}", str(line['qty']),
+                f"{line['area_total']:.2f}", f"${line_total:,.2f}"]
+        for i, v in enumerate(vals):
+            p = row.cells[i].paragraphs[0]
+            if i >= 3:
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.add_run(v).font.size = Pt(9)
+
+    # ── Packaging + Subtotal ──
+    row = table.add_row()
+    c = row.cells[0]; c.merge(row.cells[3])
+    run = c.paragraphs[0].add_run(f"Packaging: {packaging_note}"); run.underline = True; run.font.size = Pt(9)
+    c = row.cells[4]; c.merge(row.cells[5])
+    c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    c.paragraphs[0].add_run("SUBTOTAL").font.size = Pt(9)
+    row.cells[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run = row.cells[6].paragraphs[0].add_run(f"${subtotal:,.2f}"); run.bold = True; run.font.size = Pt(9)
+
+    # ── Helper for cost rows ──
+    def _cost_row(label, amount):
+        r = table.add_row()
+        r.cells[0].merge(r.cells[3])
+        c2 = r.cells[4]; c2.merge(r.cells[5])
+        c2.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        c2.paragraphs[0].add_run(label).font.size = Pt(9)
+        r.cells[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        r.cells[6].paragraphs[0].add_run(f"${amount:,.2f}" if amount else "").font.size = Pt(9)
+        return r
+
+    _cost_row("SALES TAX", sales_tax)
+    _cost_row("PACKAGING", packaging_cost)
+
+    # ── Shipping row (with terms text on the left) ──
+    row = table.add_row()
+    c = row.cells[0]; c.merge(row.cells[3])
+    for ln in [
+        "1. Enter this order in accordance with the prices, terms, delivery method, and specifications listed in this purchase order.",
+        "2. Please notify us immediately if you are unable to ship as specified.",
+        "3. Send all correspondence to:",
+        "   INOVUES, INC.",
+        "   2700 Post Oak Blvd, 2100, Houston, TX 77056",
+        "   (833) 466-8837 (INO-VUES)",
+        "   accounts@inovues.com",
+    ]:
+        c.add_paragraph().add_run(ln).font.size = Pt(7)
+    c2 = row.cells[4]; c2.merge(row.cells[5])
+    c2.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    c2.paragraphs[0].add_run("SHIPPING & HANDLING").font.size = Pt(9)
+    row.cells[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    row.cells[6].paragraphs[0].add_run(f"${shipping_cost:,.2f}" if shipping_cost else "").font.size = Pt(9)
+
+    _cost_row("OTHER", other_cost)
+
+    # ── Total ──
+    row = table.add_row()
+    row.cells[0].merge(row.cells[3])
+    c = row.cells[4]; c.merge(row.cells[5])
+    c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run = c.paragraphs[0].add_run("TOTAL"); run.bold = True; run.font.size = Pt(10)
+    row.cells[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run = row.cells[6].paragraphs[0].add_run(f"${total:,.2f}"); run.bold = True; run.font.size = Pt(10)
+
+    # ── Signature ──
+    row = table.add_row()
+    row.cells[0].merge(row.cells[3])
+    c = row.cells[4]; c.merge(row.cells[5])
+    run = c.paragraphs[0].add_run("Authorized by _____________________"); run.italic = True; run.font.size = Pt(9)
+    row.cells[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    row.cells[6].paragraphs[0].add_run(po_date).font.size = Pt(9)
+
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
 
 # Display logo and title
 st.image("ilogo.png", width=200)
@@ -388,14 +583,14 @@ if uploaded_file:
                     st.error(f"❌ Error: {str(e)}")
 
     # ─────────────────────────────────────────────────────────────
-    # 📝 CREATE DRAFT PURCHASE ORDER IN ODOO
+    # 📝 CREATE PURCHASE ORDER (DOCX + ODOO)
     # ─────────────────────────────────────────────────────────────
     st.divider()
-    st.subheader("📝 Create Glass Purchase Order in Odoo")
+    st.subheader("📝 Glass Purchase Order")
 
     glass_lines = glass_df[glass_df['Tag'] != 'Totals'].copy()
 
-    st.write("**Preview — PO lines to be created:**")
+    st.write("**Preview — PO lines:**")
     preview_df = pd.DataFrame({
         'Size': (glass_lines['Glass Width (1/16)'].astype(str) + '" x ' + glass_lines['Glass Height (1/16)'].astype(str) + '"').values,
         'Area Each (ft²)': pd.to_numeric(glass_lines['Area Each (ft²)']).round(2).values,
@@ -408,7 +603,7 @@ if uploaded_file:
     total_area = pd.to_numeric(glass_lines['Area Total (ft²)']).sum()
     st.write(f"**Totals:** {total_qty} pieces | {total_area:.2f} ft²")
 
-    # --- Vendor selector (required by Odoo) ---
+    # --- Vendor selector (with full contact details) ---
     @st.cache_data(ttl=300, show_spinner="Loading vendors from Odoo...")
     def fetch_odoo_vendors():
         try:
@@ -417,21 +612,52 @@ if uploaded_file:
             if not _uid:
                 return None, "Authentication failed."
             _models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+            vendor_fields = ["id", "name", "email", "phone", "street", "street2",
+                             "city", "state_id", "zip", "country_id",
+                             "child_ids"]
             vendors = _models.execute_kw(
                 ODOO_DB, _uid, ODOO_API_KEY,
                 "res.partner", "search_read",
                 [[["supplier_rank", ">", 0]]],
-                {"fields": ["id", "name"], "order": "name asc", "limit": 200}
+                {"fields": vendor_fields, "order": "name asc", "limit": 200}
             )
             if not vendors:
-                # Fallback: load all companies if no vendor-ranked contacts yet
                 vendors = _models.execute_kw(
                     ODOO_DB, _uid, ODOO_API_KEY,
                     "res.partner", "search_read",
                     [[["is_company", "=", True]]],
-                    {"fields": ["id", "name"], "order": "name asc", "limit": 200}
+                    {"fields": vendor_fields, "order": "name asc", "limit": 200}
                 )
-            return {v["name"]: v["id"] for v in vendors}, None
+            # Build contact name from first child_ids contact if available
+            for v in vendors:
+                if v.get("child_ids"):
+                    contacts = _models.execute_kw(
+                        ODOO_DB, _uid, ODOO_API_KEY,
+                        "res.partner", "read",
+                        [v["child_ids"][:1]],
+                        {"fields": ["name", "email"]}
+                    )
+                    if contacts:
+                        v["contact_name"] = contacts[0].get("name", "")
+                        if not v.get("email"):
+                            v["email"] = contacts[0].get("email", "")
+                else:
+                    v["contact_name"] = ""
+                # Build address string
+                addr_parts = [p for p in [v.get("street"), v.get("street2")] if p]
+                city_line = ", ".join(p for p in [
+                    v.get("city"),
+                    v.get("state_id", [False, ""])[1] if isinstance(v.get("state_id"), list) else "",
+                    v.get("zip")
+                ] if p)
+                if city_line:
+                    addr_parts.append(city_line)
+                country = v.get("country_id", [False, ""])[1] if isinstance(v.get("country_id"), list) else ""
+                if country:
+                    addr_parts.append(country)
+                v["full_address"] = "\n".join(addr_parts)
+
+            return {v["name"]: v for v in vendors}, None
         except Exception as e:
             return None, str(e)
 
@@ -441,97 +667,232 @@ if uploaded_file:
     if vendor_err:
         st.error(f"❌ Could not load vendors: {vendor_err}")
     elif not vendor_map:
-        st.warning("No vendors found in Odoo. Create a vendor contact first (Contacts → New, enable 'Is a Company').")
+        st.warning("No vendors found in Odoo.")
     else:
         selected_vendor = st.selectbox(
             "Select Glass Vendor",
             options=list(vendor_map.keys()),
             index=None,
             placeholder="Choose a vendor...",
-            help="Required — Odoo won't create a PO without a vendor."
+            help="Required — vendor details will be pulled from Odoo."
         )
+
+    # Show vendor details if selected
+    if selected_vendor and vendor_map:
+        v = vendor_map[selected_vendor]
+        with st.expander("📇 Vendor Details (from Odoo)", expanded=False):
+            st.text(f"Name: {v['name']}")
+            st.text(f"Contact: {v.get('contact_name', '')}")
+            st.text(f"Email: {v.get('email', '')}")
+            st.text(f"Address: {v.get('full_address', '')}")
+
+    st.divider()
+
+    # --- PO Details & Pricing ---
+    st.write("**PO Details**")
+    po_col1, po_col2, po_col3 = st.columns(3)
+    with po_col1:
+        po_number_input = st.text_input("PO Number", value=project_number)
+        po_requisitioner = st.text_input("Requisitioner", value=prepared_by)
+    with po_col2:
+        po_lead_time = st.text_input("Lead Time", value="ASAP")
+        po_shipped_via = st.text_input("Shipped Via", value="AIR")
+    with po_col3:
+        po_fob = st.text_input("F.O.B. Point", value="DDP")
+        po_terms = st.text_input("Terms", value="Net 30")
+
+    st.write("**Ship To**")
+    ship_to_default = "Momentum Glass, LLC\nAttn: INOVUES, INC.\n25825 Aldine Westfield Rd.\nSpring, TX 77373\n281.809.2830"
+    ship_to_text = st.text_area("Ship To Address", value=ship_to_default, height=120)
+    job_location = st.text_input("Job Location", value="")
+
+    st.write("**Pricing**")
+    pr_col1, pr_col2 = st.columns(2)
+    with pr_col1:
+        price_per_sqft = st.number_input("Price per sqft ($)", value=0.0, min_value=0.0, step=0.01, format="%.2f")
+        packaging_cost = st.number_input("Packaging ($)", value=0.0, min_value=0.0, step=10.0, format="%.2f")
+        sales_tax = st.number_input("Sales Tax ($)", value=0.0, min_value=0.0, step=0.01, format="%.2f")
+    with pr_col2:
+        shipping_cost = st.number_input("Shipping & Handling ($)", value=0.0, min_value=0.0, step=50.0, format="%.2f")
+        other_cost = st.number_input("Other ($)", value=0.0, min_value=0.0, step=10.0, format="%.2f")
+        packaging_note = st.text_input("Packaging Note", value="Non-returnable boxed crate/rack")
+
+    # Calculate and show totals
+    subtotal = total_area * price_per_sqft
+    grand_total = subtotal + sales_tax + packaging_cost + shipping_cost + other_cost
+    st.write(f"**Subtotal:** ${subtotal:,.2f} | **Grand Total:** ${grand_total:,.2f}")
 
     vendor_ready = (vendor_map and not vendor_err and selected_vendor is not None)
 
-    if st.button("📝 Create Draft PO in Odoo", type="primary", disabled=not vendor_ready):
-        with st.spinner("Creating draft Purchase Order in Odoo..."):
-            try:
-                common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
-                uid    = common.authenticate(ODOO_DB, ODOO_USER, ODOO_API_KEY, {})
-                models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+    # --- Build glass line items for the docx ---
+    po_glass_lines = []
+    for _, row in glass_lines.iterrows():
+        po_glass_lines.append({
+            'tag': str(row.get('Tag', '')),
+            'size_str': f"{row['Glass Width (1/16)']}\" x {row['Glass Height (1/16)']}\"",
+            'area_each': round(float(row['Area Each (ft²)']), 2),
+            'qty': int(float(row['Qty'])),
+            'area_total': round(float(row['Area Total (ft²)']), 2),
+        })
 
-                def odoo_call(model, method, args, kwargs={}):
-                    return models.execute_kw(ODOO_DB, uid, ODOO_API_KEY, model, method, args, kwargs)
+    st.divider()
 
-                product_ids = odoo_call("product.product", "search",
-                    [[["name", "ilike", "SWR Glass Panel"]]])
+    # --- Generate DOCX PO ---
+    doc_col, odoo_col = st.columns(2)
 
-                if not product_ids:
-                    st.error("❌ Product 'SWR Glass Panel' not found in Odoo. Please create it first.")
-                else:
-                    product_id = product_ids[0]
+    with doc_col:
+        st.write("**📄 Download PO Document**")
+        if st.button("📄 Generate PO (.docx)", type="secondary", disabled=not vendor_ready):
+            v = vendor_map[selected_vendor]
+            logo_path = "ilogo.png" if os.path.exists("ilogo.png") else None
+            po_buf = generate_po_docx(
+                vendor_name=v['name'],
+                vendor_contact=v.get('contact_name', ''),
+                vendor_email=v.get('email', ''),
+                vendor_address=v.get('full_address', ''),
+                ship_to_lines=[ln for ln in ship_to_text.split('\n') if ln.strip()],
+                job_number=project_number,
+                job_location=job_location,
+                po_date=datetime.now().strftime('%m/%d/%Y'),
+                po_number=po_number_input,
+                requisitioner=po_requisitioner,
+                lead_time=po_lead_time,
+                shipped_via=po_shipped_via,
+                fob_point=po_fob,
+                terms=po_terms,
+                glass_lines=po_glass_lines,
+                price_per_sqft=price_per_sqft,
+                packaging_cost=packaging_cost,
+                shipping_cost=shipping_cost,
+                sales_tax=sales_tax,
+                other_cost=other_cost,
+                packaging_note=packaging_note,
+                logo_path=logo_path,
+            )
+            st.session_state['po_docx_buf'] = po_buf.getvalue()
+            st.success("✅ PO document generated!")
 
-                    # Read the product info
-                    product_data = odoo_call("product.product", "read",
-                        [product_id], {"fields": ["name"]})
+        if 'po_docx_buf' in st.session_state:
+            st.download_button(
+                "💾 Download PO .docx",
+                data=st.session_state['po_docx_buf'],
+                file_name=f"INOVUES_PO_{po_number_input}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
 
-                    order_lines = []
-                    for _, row in glass_lines.iterrows():
-                        size_str   = f"{row['Glass Width (1/16)']}\" x {row['Glass Height (1/16)']}\""
-                        area_each  = round(float(row['Area Each (ft²)']), 2)
-                        qty_pcs    = int(float(row['Qty']))
-                        total_area = round(float(row['Area Total (ft²)']), 2)
+    # --- Create Draft PO in Odoo + attach docx ---
+    with odoo_col:
+        st.write("**🔗 Create Draft PO in Odoo**")
+        if st.button("📝 Create Draft PO in Odoo", type="primary", disabled=not vendor_ready):
+            with st.spinner("Creating draft Purchase Order in Odoo..."):
+                try:
+                    common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+                    uid    = common.authenticate(ODOO_DB, ODOO_USER, ODOO_API_KEY, {})
+                    models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
-                        description = (
-                            f"{size_str}\n"
-                            f"Unit Area: {area_each} ft2  |  Qty: {qty_pcs} pcs  |  Total Area: {total_area} ft2"
+                    def odoo_call(model, method, args, kwargs={}):
+                        return models.execute_kw(ODOO_DB, uid, ODOO_API_KEY, model, method, args, kwargs)
+
+                    product_ids = odoo_call("product.product", "search",
+                        [[["name", "ilike", "SWR Glass Panel"]]])
+
+                    if not product_ids:
+                        st.error("❌ Product 'SWR Glass Panel' not found in Odoo. Please create it first.")
+                    else:
+                        product_id = product_ids[0]
+                        v = vendor_map[selected_vendor]
+
+                        order_lines = []
+                        for gl in po_glass_lines:
+                            description = (
+                                f"{gl['size_str']}\n"
+                                f"Unit Area: {gl['area_each']} ft2  |  Qty: {gl['qty']} pcs  |  Total Area: {gl['area_total']} ft2"
+                            )
+                            line_total = gl['area_total'] * price_per_sqft
+                            order_lines.append((0, 0, {
+                                "product_id":  product_id,
+                                "name":        description,
+                                "product_qty": gl['qty'],
+                                "price_unit":  line_total / gl['qty'] if gl['qty'] > 0 else 0.0,
+                            }))
+
+                        po_vals = {
+                            "partner_id": v["id"],
+                            "origin": f"INO-{project_number} / SWR Cut List",
+                            "order_line": order_lines,
+                        }
+
+                        po_id = odoo_call("purchase.order", "create", [po_vals])
+
+                        po_data = odoo_call("purchase.order", "read",
+                            [po_id], {"fields": ["name"]})
+                        po_name = po_data[0]["name"] if po_data else f"ID {po_id}"
+
+                        # Generate and attach the PO docx to the Odoo task
+                        logo_path = "ilogo.png" if os.path.exists("ilogo.png") else None
+                        po_buf = generate_po_docx(
+                            vendor_name=v['name'],
+                            vendor_contact=v.get('contact_name', ''),
+                            vendor_email=v.get('email', ''),
+                            vendor_address=v.get('full_address', ''),
+                            ship_to_lines=[ln for ln in ship_to_text.split('\n') if ln.strip()],
+                            job_number=project_number,
+                            job_location=job_location,
+                            po_date=datetime.now().strftime('%m/%d/%Y'),
+                            po_number=po_number_input,
+                            requisitioner=po_requisitioner,
+                            lead_time=po_lead_time,
+                            shipped_via=po_shipped_via,
+                            fob_point=po_fob,
+                            terms=po_terms,
+                            glass_lines=po_glass_lines,
+                            price_per_sqft=price_per_sqft,
+                            packaging_cost=packaging_cost,
+                            shipping_cost=shipping_cost,
+                            sales_tax=sales_tax,
+                            other_cost=other_cost,
+                            packaging_note=packaging_note,
+                            logo_path=logo_path,
                         )
 
-                        order_lines.append((0, 0, {
-                            "product_id":  product_id,
-                            "name":        description,
-                            "product_qty": qty_pcs,
-                            "price_unit":  0.0,
-                        }))
+                        # Attach PO docx to the Odoo PO record
+                        odoo_call("ir.attachment", "create", [{
+                            "name":      f"INOVUES_PO_{po_number_input}.docx",
+                            "type":      "binary",
+                            "datas":     base64.b64encode(po_buf.getvalue()).decode("utf-8"),
+                            "res_model": "purchase.order",
+                            "res_id":    po_id,
+                            "mimetype":  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        }])
 
-                    po_vals = {
-                        "partner_id": vendor_map[selected_vendor],
-                        "origin": f"INO-{project_number} / SWR Cut List",
-                        "order_line": order_lines,
-                    }
+                        # Post chatter message on the PO
+                        odoo_call("purchase.order", "message_post", [[po_id]], {
+                            "body": (
+                                f"<b>📝 Draft PO from SWR Cutlist App</b><br/>"
+                                f"Project: {project_name}<br/>"
+                                f"Project Number: {project_number}<br/>"
+                                f"System: {system_type} | Finish: {finish}<br/>"
+                                f"Vendor: {v['name']}<br/>"
+                                f"Prepared by: {prepared_by}<br/>"
+                                f"Subtotal: ${subtotal:,.2f} | Total: ${grand_total:,.2f}<br/>"
+                                f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}<br/>"
+                                f"PO document (.docx) attached."
+                            ),
+                            "message_type": "comment",
+                            "subtype_xmlid": "mail.mt_comment",
+                        })
 
-                    po_id = odoo_call("purchase.order", "create", [po_vals])
+                        st.success(
+                            f"✅ Draft PO **{po_name}** created for **{selected_vendor}** with "
+                            f"{len(order_lines)} glass lines! PO docx attached.\n\n"
+                            f"Open it in Odoo to review and confirm."
+                        )
+                        st.info(
+                            f"🔗 Open in Odoo: {ODOO_URL}/web#id={po_id}"
+                            f"&model=purchase.order&view_type=form"
+                        )
 
-                    po_data = odoo_call("purchase.order", "read",
-                        [po_id], {"fields": ["name"]})
-                    po_name = po_data[0]["name"] if po_data else f"ID {po_id}"
-
-                    # Post project info as a chatter message on the PO
-                    odoo_call("purchase.order", "message_post", [[po_id]], {
-                        "body": (
-                            f"<b>📝 Draft PO from SWR Cutlist App</b><br/>"
-                            f"Project: {project_name}<br/>"
-                            f"Project Number: {project_number}<br/>"
-                            f"System: {system_type} | Finish: {finish}<br/>"
-                            f"Prepared by: {prepared_by}<br/>"
-                            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-                        ),
-                        "message_type": "comment",
-                        "subtype_xmlid": "mail.mt_comment",
-                    })
-
-                    st.success(
-                        f"✅ Draft PO **{po_name}** created for **{selected_vendor}** with "
-                        f"{len(order_lines)} glass lines!\n\n"
-                        f"Open it in Odoo to add pricing, glass specs, "
-                        f"packaging, and other charges."
-                    )
-                    st.info(
-                        f"🔗 Open in Odoo: {ODOO_URL}/web#id={po_id}"
-                        f"&model=purchase.order&view_type=form"
-                    )
-
-            except xmlrpc.client.Fault as e:
-                st.error(f"❌ Odoo API error: {e.faultString}")
-            except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
+                except xmlrpc.client.Fault as e:
+                    st.error(f"❌ Odoo API error: {e.faultString}")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")

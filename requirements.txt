@@ -2,3 +2,4 @@ streamlit
 pandas>=2.2.0
 xlsxwriter
 openpyxl
+python-docx
