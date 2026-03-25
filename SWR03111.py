@@ -57,6 +57,11 @@ def generate_po_docx(
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.style = 'Table Grid'
 
+    # Set column widths: ITEM#, DESC, UNIT SIZE, AREA EACH, QTY, TOTAL AREA, TOTAL
+    col_widths = [Cm(1.2), Cm(3.0), Cm(3.8), Cm(2.2), Cm(1.2), Cm(2.5), Cm(2.5)]
+    for i, width in enumerate(col_widths):
+        table.columns[i].width = width
+
     # ── Row: Logo + PURCHASE ORDER ──
     row = table.add_row()
     c = row.cells[0]; c.merge(row.cells[2])
@@ -121,6 +126,7 @@ def generate_po_docx(
     row = table.add_row()
     for i, h in enumerate(["ITEM#", "DESCRIPTION", "UNIT SIZE (in)", "AREA EACH (ft²)",
                             "QTY", "TOTAL AREA (ft²)", "TOTAL"]):
+        row.cells[i].width = col_widths[i]
         p = row.cells[i].paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = p.add_run(h); run.bold = True; run.font.size = Pt(8); run.font.small_caps = True
         run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
@@ -134,9 +140,12 @@ def generate_po_docx(
                 f"{line['area_each']:.2f}", str(line['qty']),
                 f"{line['area_total']:.2f}", f"${line_total:,.2f}"]
         for i, v in enumerate(vals):
+            row.cells[i].width = col_widths[i]
             p = row.cells[i].paragraphs[0]
-            if i >= 3:
+            if i == 0 or i >= 3:
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            if i == 6:
+                p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
             p.add_run(v).font.size = Pt(9)
 
     # ── Packaging + Subtotal ──
