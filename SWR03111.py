@@ -332,6 +332,17 @@ if uploaded_file:
     df = pd.read_csv(uploaded_file)
     st.dataframe(df)
 
+    # ── Date + version for filenames ──
+    file_date = datetime.now().strftime("%Y-%m-%d")
+    if 'file_version_date' not in st.session_state or st.session_state.file_version_date != file_date:
+        st.session_state.file_version_date = file_date
+        st.session_state.file_version = 1
+    file_ver = st.session_state.file_version
+
+    def make_fname(label, ext="xlsx"):
+        """Generate filename: INO_{project}_{label}_{date}_v{ver}.{ext}"""
+        return f"INO_{project_number}_{label}_{file_date}_v{file_ver}.{ext}"
+
     # Convert dims
     df['Overall Width mm'] = df['Overall Width in'] * inches_to_mm
     df['Overall Height mm'] = df['Overall Height in'] * inches_to_mm
@@ -399,7 +410,7 @@ if uploaded_file:
             pws.write(idx - 1, 0, lbl)
             pws.write(idx - 1, 1, val)
             pws.write(idx - 1, 2, unit)
-    st.download_button('Download Glass File', buf.getvalue(), file_name=f'INO_{project_number}_SWR_Glass.xlsx')
+    st.download_button('Download Glass File', buf.getvalue(), file_name=make_fname('SWR_Glass'))
 
     # --- AggCutOnly File Export ---
     df['Qty x 2'] = df['Qty'] * 2
@@ -431,7 +442,7 @@ if uploaded_file:
             pws.write(idx - 1, 0, lbl)
             pws.write(idx - 1, 1, val)
             pws.write(idx - 1, 2, unit)
-    st.download_button('Download AggCutOnly File', buf2.getvalue(), file_name=f'INO_{project_number}_SWR_AggCutOnly.xlsx')
+    st.download_button('Download AggCutOnly File', buf2.getvalue(), file_name=make_fname('SWR_AggCutOnly'))
 
     # --- TagDetails File Export ---
     buf3 = BytesIO()
@@ -460,7 +471,7 @@ if uploaded_file:
             pws.write(idx - 1, 0, lbl)
             pws.write(idx - 1, 1, val)
             pws.write(idx - 1, 2, unit)
-    st.download_button('Download TagDetails File', buf3.getvalue(), file_name=f'INO_{project_number}_SWR_TagDetails.xlsx')
+    st.download_button('Download TagDetails File', buf3.getvalue(), file_name=make_fname('SWR_TagDetails'))
 
     # --- SWR Table File Export ---
     buf4 = BytesIO()
@@ -488,7 +499,7 @@ if uploaded_file:
             pws.write(idx - 1, 0, lbl)
             pws.write(idx - 1, 1, val)
             pws.write(idx - 1, 2, unit)
-    st.download_button('Download SWR Table File', buf4.getvalue(), file_name=f'INO_{project_number}_SWR_Table.xlsx')
+    st.download_button('Download SWR Table File', buf4.getvalue(), file_name=make_fname('SWR_Table'))
 
     # ─────────────────────────────────────────────────────────────
     # 💾 SAVE TO ODOO
@@ -556,10 +567,10 @@ if uploaded_file:
                     }])
 
                     files = [
-                        (f"INO_{project_number}_SWR_Glass_{ts}.xlsx",      buf.getvalue()),
-                        (f"INO_{project_number}_SWR_AggCutOnly_{ts}.xlsx", buf2.getvalue()),
-                        (f"INO_{project_number}_SWR_TagDetails_{ts}.xlsx", buf3.getvalue()),
-                        (f"INO_{project_number}_SWR_Table_{ts}.xlsx",      buf4.getvalue()),
+                        (make_fname('SWR_Glass'),      buf.getvalue()),
+                        (make_fname('SWR_AggCutOnly'),  buf2.getvalue()),
+                        (make_fname('SWR_TagDetails'),  buf3.getvalue()),
+                        (make_fname('SWR_Table'),       buf4.getvalue()),
                     ]
 
                     for fname, fdata in files:
@@ -584,7 +595,8 @@ if uploaded_file:
                         "subtype_xmlid": "mail.mt_comment",
                     })
 
-                    st.success(f"✅ All 4 files attached to task **SWR Cutlist** in **{selected_project_name}** (Engineering → Approved)!")
+                    st.success(f"✅ All 4 files (v{file_ver}) attached to task **SWR Cutlist** in **{selected_project_name}** (Engineering → Approved)!")
+                    st.session_state.file_version += 1
 
                 except xmlrpc.client.Fault as e:
                     st.error(f"❌ Odoo API error: {e.faultString}")
@@ -818,7 +830,7 @@ if uploaded_file:
             st.download_button(
                 "💾 Download PO .docx",
                 data=st.session_state['po_docx_buf'],
-                file_name=f"INOVUES_PO_{po_number_input}.docx",
+                file_name=make_fname(f"PO_{po_number_input}", "docx"),
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
 
@@ -900,7 +912,7 @@ if uploaded_file:
 
                         # Attach PO docx to the Odoo PO record
                         odoo_call("ir.attachment", "create", [{
-                            "name":      f"INOVUES_PO_{po_number_input}.docx",
+                            "name":      make_fname(f"PO_{po_number_input}", "docx"),
                             "type":      "binary",
                             "datas":     base64.b64encode(po_buf.getvalue()).decode("utf-8"),
                             "res_model": "purchase.order",
