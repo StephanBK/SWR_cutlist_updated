@@ -3,3 +3,5 @@ pandas>=2.2.0
 xlsxwriter
 openpyxl
 python-docx
+google-api-python-client
+google-auth

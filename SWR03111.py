@@ -5,11 +5,79 @@ from io import BytesIO
 import xmlrpc.client
 import base64
 import os
+import json
 from docx import Document as DocxDocument
 from docx.shared import Inches, Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
+
+# ─────────────────────────────────────────────────────────────
+# 📁 GOOGLE DRIVE UPLOAD
+# ─────────────────────────────────────────────────────────────
+GDRIVE_FOLDER_ID = os.environ.get("GDRIVE_FOLDER_ID", "")
+GDRIVE_CREDS_JSON = os.environ.get("GDRIVE_CREDS_JSON", "")
+
+
+def upload_to_gdrive(filename, file_bytes, mimetype, subfolder_name=None):
+    """Upload a file to Google Drive. Optionally create/use a subfolder."""
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaInMemoryUpload
+
+        if not GDRIVE_CREDS_JSON or not GDRIVE_FOLDER_ID:
+            return None, "Google Drive not configured (missing GDRIVE_CREDS_JSON or GDRIVE_FOLDER_ID)"
+
+        creds_info = json.loads(GDRIVE_CREDS_JSON)
+        creds = service_account.Credentials.from_service_account_info(
+            creds_info, scopes=['https://www.googleapis.com/auth/drive']
+        )
+        service = build('drive', 'v3', credentials=creds)
+
+        # Determine target folder
+        target_folder = GDRIVE_FOLDER_ID
+
+        if subfolder_name:
+            # Check if subfolder already exists
+            query = (
+                f"'{GDRIVE_FOLDER_ID}' in parents and "
+                f"name = '{subfolder_name}' and "
+                f"mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+            )
+            results = service.files().list(q=query, fields="files(id)").execute()
+            existing = results.get('files', [])
+
+            if existing:
+                target_folder = existing[0]['id']
+            else:
+                # Create subfolder
+                folder_meta = {
+                    'name': subfolder_name,
+                    'mimeType': 'application/vnd.google-apps.folder',
+                    'parents': [GDRIVE_FOLDER_ID]
+                }
+                folder = service.files().create(body=folder_meta, fields='id').execute()
+                target_folder = folder['id']
+
+        # Upload file
+        media = MediaInMemoryUpload(file_bytes, mimetype=mimetype)
+        file_metadata = {
+            'name': filename,
+            'parents': [target_folder]
+        }
+        uploaded = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, name, webViewLink'
+        ).execute()
+
+        return uploaded, None
+
+    except ImportError:
+        return None, "Google Drive libraries not installed (google-api-python-client, google-auth)"
+    except Exception as e:
+        return None, str(e)
 
 # Conversion constants
 inches_to_mm = 25.4
@@ -597,6 +665,23 @@ if uploaded_file:
 
                     st.success(f"✅ All 4 files (v{file_ver}) attached to task **SWR Cutlist** in **{selected_project_name}** (Engineering → Approved)!")
                     st.session_state.file_version += 1
+
+                    # ── Also upload to Google Drive ──
+                    if GDRIVE_CREDS_JSON and GDRIVE_FOLDER_ID:
+                        gdrive_ok = 0
+                        gdrive_subfolder = selected_project_name
+                        for fname, fdata in files:
+                            result, err = upload_to_gdrive(
+                                fname, fdata,
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                subfolder_name=gdrive_subfolder
+                            )
+                            if result:
+                                gdrive_ok += 1
+                            elif err:
+                                st.warning(f"⚠️ Drive upload failed for {fname}: {err}")
+                        if gdrive_ok > 0:
+                            st.success(f"📁 {gdrive_ok} file(s) also saved to Google Drive → {gdrive_subfolder}/")
 
                 except xmlrpc.client.Fault as e:
                     st.error(f"❌ Odoo API error: {e.faultString}")
