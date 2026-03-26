@@ -17,10 +17,11 @@ from docx.oxml.ns import qn
 # ─────────────────────────────────────────────────────────────
 GDRIVE_FOLDER_ID = os.environ.get("GDRIVE_FOLDER_ID", "")
 GDRIVE_CREDS_JSON = os.environ.get("GDRIVE_CREDS_JSON", "")
+GDRIVE_IMPERSONATE = os.environ.get("GDRIVE_IMPERSONATE", "sketterer@inovues.com")
 
 
 def upload_to_gdrive(filename, file_bytes, mimetype, subfolder_name=None):
-    """Upload a file to Google Drive. Optionally create/use a subfolder."""
+    """Upload a file to Google Drive using domain-wide delegation."""
     try:
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
@@ -33,6 +34,11 @@ def upload_to_gdrive(filename, file_bytes, mimetype, subfolder_name=None):
         creds = service_account.Credentials.from_service_account_info(
             creds_info, scopes=['https://www.googleapis.com/auth/drive']
         )
+
+        # Impersonate a real user so files count against their quota
+        if GDRIVE_IMPERSONATE:
+            creds = creds.with_subject(GDRIVE_IMPERSONATE)
+
         service = build('drive', 'v3', credentials=creds)
 
         # Determine target folder
@@ -45,7 +51,10 @@ def upload_to_gdrive(filename, file_bytes, mimetype, subfolder_name=None):
                 f"name = '{subfolder_name}' and "
                 f"mimeType = 'application/vnd.google-apps.folder' and trashed = false"
             )
-            results = service.files().list(q=query, fields="files(id)").execute()
+            results = service.files().list(
+                q=query, fields="files(id)",
+                supportsAllDrives=True, includeItemsFromAllDrives=True
+            ).execute()
             existing = results.get('files', [])
 
             if existing:
@@ -57,7 +66,10 @@ def upload_to_gdrive(filename, file_bytes, mimetype, subfolder_name=None):
                     'mimeType': 'application/vnd.google-apps.folder',
                     'parents': [GDRIVE_FOLDER_ID]
                 }
-                folder = service.files().create(body=folder_meta, fields='id').execute()
+                folder = service.files().create(
+                    body=folder_meta, fields='id',
+                    supportsAllDrives=True
+                ).execute()
                 target_folder = folder['id']
 
         # Upload file
@@ -69,7 +81,8 @@ def upload_to_gdrive(filename, file_bytes, mimetype, subfolder_name=None):
         uploaded = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id, name, webViewLink'
+            fields='id, name, webViewLink',
+            supportsAllDrives=True
         ).execute()
 
         return uploaded, None
