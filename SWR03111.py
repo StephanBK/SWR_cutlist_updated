@@ -15,76 +15,38 @@ from docx.oxml.ns import qn
 # ─────────────────────────────────────────────────────────────
 # 📁 GOOGLE DRIVE UPLOAD
 # ─────────────────────────────────────────────────────────────
-GDRIVE_FOLDER_ID = os.environ.get("GDRIVE_FOLDER_ID", "")
-GDRIVE_CREDS_JSON = os.environ.get("GDRIVE_CREDS_JSON", "")
+GDRIVE_WEBHOOK_URL = os.environ.get("GDRIVE_WEBHOOK_URL", "")
 
 
 def upload_to_gdrive(filename, file_bytes, mimetype, subfolder_name=None):
-    """Upload a file to a Google Shared Drive folder."""
+    """Upload a file to Google Drive via Apps Script webhook."""
     try:
-        from google.oauth2 import service_account
-        from googleapiclient.discovery import build
-        from googleapiclient.http import MediaInMemoryUpload
+        import urllib.request
 
-        if not GDRIVE_CREDS_JSON or not GDRIVE_FOLDER_ID:
-            return None, "Google Drive not configured (missing GDRIVE_CREDS_JSON or GDRIVE_FOLDER_ID)"
+        if not GDRIVE_WEBHOOK_URL:
+            return None, "Google Drive not configured (missing GDRIVE_WEBHOOK_URL)"
 
-        creds_info = json.loads(GDRIVE_CREDS_JSON)
-        creds = service_account.Credentials.from_service_account_info(
-            creds_info, scopes=['https://www.googleapis.com/auth/drive']
+        payload = json.dumps({
+            "filename": filename,
+            "data": base64.b64encode(file_bytes).decode("utf-8"),
+            "mimetype": mimetype,
+            "subfolder": subfolder_name or ""
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            GDRIVE_WEBHOOK_URL,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
         )
-        service = build('drive', 'v3', credentials=creds)
+        resp = urllib.request.urlopen(req, timeout=30)
+        result = json.loads(resp.read().decode("utf-8"))
 
-        # Determine target folder
-        target_folder = GDRIVE_FOLDER_ID
+        if result.get("success"):
+            return result, None
+        else:
+            return None, result.get("error", "Unknown error")
 
-        if subfolder_name:
-            # Check if subfolder already exists in the shared drive
-            query = (
-                f"'{GDRIVE_FOLDER_ID}' in parents and "
-                f"name = '{subfolder_name}' and "
-                f"mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-            )
-            results = service.files().list(
-                q=query, fields="files(id)",
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True,
-                corpora='allDrives'
-            ).execute()
-            existing = results.get('files', [])
-
-            if existing:
-                target_folder = existing[0]['id']
-            else:
-                # Create subfolder in shared drive
-                folder_meta = {
-                    'name': subfolder_name,
-                    'mimeType': 'application/vnd.google-apps.folder',
-                    'parents': [GDRIVE_FOLDER_ID]
-                }
-                folder = service.files().create(
-                    body=folder_meta, fields='id',
-                    supportsAllDrives=True
-                ).execute()
-                target_folder = folder['id']
-
-        # Upload file to shared drive
-        media = MediaInMemoryUpload(file_bytes, mimetype=mimetype)
-        file_metadata = {
-            'name': filename,
-            'parents': [target_folder]
-        }
-        uploaded = service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id, name, webViewLink',
-            supportsAllDrives=True
-        ).execute()
-
-        return uploaded, None
-
-    except ImportError:
-        return None, "Google Drive libraries not installed (google-api-python-client, google-auth)"
     except Exception as e:
         return None, str(e)
 
@@ -676,7 +638,7 @@ if uploaded_file:
                     st.session_state.file_version += 1
 
                     # ── Also upload to Google Drive ──
-                    if GDRIVE_CREDS_JSON and GDRIVE_FOLDER_ID:
+                    if GDRIVE_WEBHOOK_URL:
                         gdrive_ok = 0
                         gdrive_subfolder = selected_project_name
                         for fname, fdata in files:
