@@ -805,9 +805,9 @@ if uploaded_file:
         po_requisitioner = st.text_input("Requisitioner", value=prepared_by)
     with po_col2:
         po_lead_time = st.text_input("Lead Time", value="ASAP")
-        po_shipped_via = st.text_input("Shipped Via", value="AIR")
+        po_shipped_via = st.selectbox("Shipped Via", options=["Air", "Ground"], index=0)
     with po_col3:
-        po_fob = st.text_input("F.O.B. Point", value="DDP")
+        po_fob = st.selectbox("F.O.B. Point", options=["CIF", "DDP", "DAP", "EXW", "FOB"], index=1)
         po_terms = st.text_input("Terms", value="Net 30")
 
     st.write("**Ship To**")
