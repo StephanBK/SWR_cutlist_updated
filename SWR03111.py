@@ -265,7 +265,7 @@ prepared_by = st.text_input("Prepared By")
 
 # System type and finish
 system_type = st.selectbox("Select System Type", ["SWR-IG", "SWR-VIG", "SWR", "Custom"])
-finish = st.selectbox("Select Finish", ["Mil Finish", "Clear Anodized", "Black Anodized", "Painted"])
+finish = st.selectbox("Select Finish", ["Mil Finish", "Clear Anodized", "Black Anodized", "Painted", "Light Bronze", "Medium Bronze", "Dark Bronze", "Champagne Anodized", "Gold Anodized", "Dark Gold Anodized"])
 
 # Determine Glass Offset and profile number
 offset_unit = 'mm'
