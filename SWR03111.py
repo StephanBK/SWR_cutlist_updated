@@ -737,13 +737,26 @@ if uploaded_file:
                     [[["is_company", "=", True]]],
                     {"fields": vendor_fields, "order": "name asc", "limit": 200}
                 )
-            # Build contact name from first child_ids contact if available
+            # Build contact name: prefer child tagged 'Orders', else first child.
+            # The 'Orders' tag (res.partner.category) flags the primary ordering
+            # contact for a vendor — set it on whichever child should appear in POs.
             for v in vendors:
                 if v.get("child_ids"):
+                    # Try to find a child tagged 'Orders' first
+                    primary_ids = _models.execute_kw(
+                        ODOO_DB, _uid, ODOO_API_KEY,
+                        "res.partner", "search",
+                        [[
+                            ["id", "in", v["child_ids"]],
+                            ["category_id.name", "=", "Orders"],
+                        ]],
+                        {"limit": 1}
+                    )
+                    target_ids = primary_ids if primary_ids else v["child_ids"][:1]
                     contacts = _models.execute_kw(
                         ODOO_DB, _uid, ODOO_API_KEY,
                         "res.partner", "read",
-                        [v["child_ids"][:1]],
+                        [target_ids],
                         {"fields": ["name", "email"]}
                     )
                     if contacts:
