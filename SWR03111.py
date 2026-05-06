@@ -92,8 +92,8 @@ elif system_type == 'SWR':
     swr_profile_choice = st.radio(
         "Select SWR Profile (Profile – Glass Offset)",
         [
-            "03002 – 7.571 mm glass offset",
             "03111 – 11.11 mm glass offset",
+            "03002 – 7.571 mm glass offset",
         ]
     )
     if swr_profile_choice.startswith("03002"):
